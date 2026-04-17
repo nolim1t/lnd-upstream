@@ -188,6 +188,32 @@ func (a *OnionPeerActor) Receive(ctx context.Context,
 		return fn.Err[*Response](err)
 	}
 
+	// Block same-peer cycles: do not forward a message back to
+	// the peer that sent it.
+	routingAction.WhenLeft(func(fwdAction forwardAction) {
+		var nextNodeIDBytes [33]byte
+		copy(
+			nextNodeIDBytes[:],
+			fwdAction.nextNodeID.SerializeCompressed(),
+		)
+
+		if nextNodeIDBytes == a.peerPubKey {
+			log.WarnS(logCtx,
+				"Dropping cyclic onion message",
+				ErrSamePeerCycle,
+				lnutils.LogPubKey(
+					"next_node_id",
+					fwdAction.nextNodeID,
+				),
+			)
+
+			err = ErrSamePeerCycle
+		}
+	})
+	if err != nil {
+		return fn.Err[*Response](err)
+	}
+
 	// Handle the routing action.
 	payload := fn.ElimEither(routingAction,
 		func(fwdAction forwardAction) *lnwire.OnionMessagePayload {
